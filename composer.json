@@ -1,0 +1,32 @@
+{
+  "name": "igniter-labs/commission-calculator",
+  "description": "Commission calculator for TastyIgniter's Multi Vendor extension",
+  "homepage": "https://tastyigniter.com",
+  "keywords": [
+    "tastyigniter",
+    "multivendor",
+    "commission"
+  ],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Samuel Adepoyigi",
+      "email": "sam@sampoyigi.com"
+    }
+  ],
+  "require": {
+    "php": ">=7.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "IgniterLabs\\CommissionCalculator\\": "src/"
+    }
+  },
+  "extra": {
+    "branch-alias": {
+      "dev-master": "1.0-dev"
+    }
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
