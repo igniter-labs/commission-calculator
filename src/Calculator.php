@@ -4,80 +4,68 @@ namespace IgniterLabs\CommissionCalculator;
 
 use Closure;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 
 class Calculator
 {
-    protected $orderTotal;
-
-    protected $calculatedFee;
-
     /**
      * @var \Illuminate\Database\Eloquent\Model
      */
     protected $order;
 
     /**
-     * @var array|\Illuminate\Support\Collection
+     * @var \Illuminate\Support\Collection
      */
     protected $rules;
 
     /**
-     * @var array|\Illuminate\Support\Collection
-     */
-    protected $conditions;
-
-    /**
-     * @var array|\Illuminate\Support\Collection
+     * @var \Illuminate\Support\Collection
      */
     protected $totals;
 
-    protected $whenMatched;
+    protected $whenMatched = [];
 
-    protected $beforeFilter;
+    protected $beforeFilter = [];
 
-    public static function create()
+    protected $orderTotal;
+
+    protected $calculatedTotals;
+
+    public static function on(Model $order)
     {
-        return new static;
+        $instance = new static;
+        $instance->order = $order;
+        $instance->rules = collect([]);
+        $instance->conditions = collect([]);
+        $instance->totals = collect([]);
+
+        return $instance;
     }
 
-    public function useOrder(Model $order)
+    public function withRules(Collection $rules)
     {
-        $this->order = $order;
+        $this->rules = $this->rules->merge($rules);
 
         return $this;
     }
 
-    public function withRules($rules)
+    public function withTotals(Collection $totals)
     {
-        $this->rules = $rules;
-
-        return $this;
-    }
-
-    public function withConditions($conditions)
-    {
-        $this->conditions = $conditions;
-
-        return $this;
-    }
-
-    public function withTotals($totals)
-    {
-        $this->totals = $totals;
+        $this->totals = $this->totals->merge($totals);
 
         return $this;
     }
 
     public function whenMatched(Closure $callback)
     {
-        $this->whenMatched = $callback;
+        $this->whenMatched[] = $callback;
 
         return $this;
     }
 
     public function beforeFilter(Closure $callback)
     {
-        $this->beforeFilter = $callback;
+        $this->beforeFilter[] = $callback;
 
         return $this;
     }
@@ -86,7 +74,7 @@ class Calculator
     {
         $this->sumOrderTotal();
 
-        $calculatedFee = collect($this->rules)
+        return $this->rules
             ->map(function ($rule) {
                 return $this->processRule($rule);
             })
@@ -94,20 +82,12 @@ class Calculator
                 return $this->filterRule($rule);
             })
             ->reduce(function ($commissionFee, $rule) {
-                if ($this->whenMatched)
-                    call_user_func($this->whenMatched, $rule, $this->orderTotal);
+                foreach ($this->whenMatched as $callback) {
+                    $callback($rule, $this->orderTotal);
+                }
 
                 return $commissionFee + $rule->calculatedFee;
             }, 0);
-
-        $this->calculatedFee = $calculatedFee;
-
-        return $this;
-    }
-
-    public function getCalculatedFee()
-    {
-        return $this->calculatedFee;
     }
 
     public function getOrderTotal()
@@ -117,20 +97,14 @@ class Calculator
 
     protected function sumOrderTotal()
     {
-        $totalCodes = collect($this->conditions)
-            ->where('action', 'split')
-            ->pluck('code')
-            ->push(['subtotal'])
-            ->all();
-
-        $orderTotal = collect($this->totals)->whereIn('code', $totalCodes)->sum('value');
-
-        $this->orderTotal = (float)number_format($orderTotal, 2, '.', '');
+        $this->orderTotal = (float)number_format(
+            $this->totals->whereIn('code', ['subtotal'])->sum('value'), 2, '.', ''
+        );
     }
 
     protected function sumOrderTotalValue($code)
     {
-        return collect($this->totals)->where('code', $code)->sum('value');
+        return $this->totals->where('code', $code)->sum('value');
     }
 
     protected function processRule($rule)
@@ -138,17 +112,21 @@ class Calculator
         if (is_array($rule))
             $rule = (object)$rule;
 
+        $rule->calculatedTotals = [];
+
         $fee = $rule->fee_type === 'percent'
             ? ($rule->fee / 100) * $this->orderTotal
             : $rule->fee;
 
-        $calculatedFee = collect($this->conditions ?? [])
+        $calculatedFee = collect($rule->totals ?? [])
             ->filter(function ($total) {
                 return $total['action'] === 'include';
             })
-            ->reduce(function ($calculatedFee, $total) {
+            ->reduce(function ($calculatedFee, $total) use ($rule) {
+                $rule->calculatedTotals[] = $total['code'];
+
                 return $calculatedFee + $this->sumOrderTotalValue($total['code']);
-            }, number_format($fee, 2, '.', ''));
+            }, (float)number_format($fee, 2, '.', ''));
 
         $rule->calculatedFee = $calculatedFee;
 
@@ -157,8 +135,10 @@ class Calculator
 
     protected function filterRule($rule)
     {
-        if ($this->beforeFilter AND call_user_func($this->beforeFilter, $rule, $this->orderTotal))
-            return FALSE;
+        foreach ($this->beforeFilter as $callback) {
+            if ($callback($rule, $this->orderTotal))
+                return FALSE;
+        }
 
         if (isset($rule->conditions))
             return $this->evalRuleConditions($rule->conditions);
@@ -174,13 +154,13 @@ class Calculator
 
     protected function evalRuleConditions($conditions)
     {
-        return collect($conditions)
+        $result = collect($conditions)
             ->sortBy('priority')
             ->every(function ($condition) {
                 $attribute = array_get($condition, 'attribute');
                 $operator = array_get($condition, 'operator');
                 $conditionValue = mb_strtolower(trim(array_get($condition, 'value')));
-                $modelValue = $this->getOrderAttribute($attribute);
+                $modelValue = mb_strtolower(trim($this->order->{$attribute}));
 
                 if ($operator == 'is')
                     return $modelValue == $conditionValue;
@@ -206,12 +186,9 @@ class Calculator
                 if ($operator == 'equals_or_less')
                     return $modelValue <= $conditionValue;
 
-                return FALSE;
+                return TRUE;
             });
-    }
 
-    protected function getOrderAttribute($attribute)
-    {
-        return mb_strtolower(trim($this->order->{$attribute}));
+        return $result === TRUE;
     }
 }
