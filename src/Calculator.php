@@ -36,7 +36,6 @@ class Calculator
         $instance = new static;
         $instance->order = $order;
         $instance->rules = collect([]);
-        $instance->conditions = collect([]);
         $instance->totals = collect([]);
 
         return $instance;
@@ -72,16 +71,16 @@ class Calculator
 
     public function calculate()
     {
-        $this->sumOrderTotal();
+        $this->orderTotal = (float)number_format($this->sumOrderTotalValue('subtotal'), 2, '.', '');
 
         return $this->rules
-            ->map(function ($rule) {
+            ->map(function($rule) {
                 return $this->processRule($rule);
             })
-            ->filter(function ($rule) {
+            ->filter(function($rule) {
                 return $this->filterRule($rule);
             })
-            ->reduce(function ($commissionFee, $rule) {
+            ->reduce(function($commissionFee, $rule) {
                 foreach ($this->whenMatched as $callback) {
                     $callback($rule, $this->orderTotal);
                 }
@@ -93,13 +92,6 @@ class Calculator
     public function getOrderTotal()
     {
         return $this->orderTotal;
-    }
-
-    protected function sumOrderTotal()
-    {
-        $this->orderTotal = (float)number_format(
-            $this->totals->whereIn('code', ['subtotal'])->sum('value'), 2, '.', ''
-        );
     }
 
     protected function sumOrderTotalValue($code)
@@ -119,10 +111,10 @@ class Calculator
             : $rule->fee;
 
         $calculatedFee = collect($rule->totals ?? [])
-            ->filter(function ($total) {
+            ->filter(function($total) {
                 return $total['action'] === 'include';
             })
-            ->reduce(function ($calculatedFee, $total) use ($rule) {
+            ->reduce(function($calculatedFee, $total) use ($rule) {
                 $rule->calculatedTotals[] = $total['code'];
 
                 return $calculatedFee + $this->sumOrderTotalValue($total['code']);
@@ -137,7 +129,7 @@ class Calculator
     {
         foreach ($this->beforeFilter as $callback) {
             if ($callback($rule, $this->orderTotal))
-                return FALSE;
+                return false;
         }
 
         if (isset($rule->conditions))
@@ -149,14 +141,14 @@ class Calculator
         if ($rule->type === 'above')
             return $this->orderTotal >= $rule->total;
 
-        return TRUE;
+        return true;
     }
 
     protected function evalRuleConditions($conditions)
     {
         $result = collect($conditions)
             ->sortBy('priority')
-            ->every(function ($condition) {
+            ->every(function($condition) {
                 $attribute = array_get($condition, 'attribute');
                 $operator = array_get($condition, 'operator');
                 $conditionValue = mb_strtolower(trim(array_get($condition, 'value')));
@@ -175,10 +167,10 @@ class Calculator
                     return $modelValue < $conditionValue;
 
                 if ($operator == 'contains')
-                    return mb_strpos($modelValue, $conditionValue) !== FALSE;
+                    return mb_strpos($modelValue, $conditionValue) !== false;
 
                 if ($operator == 'does_not_contain')
-                    return mb_strpos($modelValue, $conditionValue) === FALSE;
+                    return mb_strpos($modelValue, $conditionValue) === false;
 
                 if ($operator == 'equals_or_greater')
                     return $modelValue >= $conditionValue;
@@ -186,9 +178,9 @@ class Calculator
                 if ($operator == 'equals_or_less')
                     return $modelValue <= $conditionValue;
 
-                return TRUE;
+                return true;
             });
 
-        return $result === TRUE;
+        return $result === true;
     }
 }
